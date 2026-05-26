@@ -1,15 +1,18 @@
+@import url("https://fonts.googleapis.com/css2?family=Archivo+Black&family=Atkinson+Hyperlegible+Next:wght@500;700;800&display=swap");
+
 :root {
-  --ink: oklch(0.18 0.028 103);
-  --soft: oklch(0.42 0.022 95);
-  --line: oklch(0.78 0.023 87);
-  --green: oklch(0.34 0.07 128);
-  --rust: oklch(0.48 0.118 51);
-  --yellow: oklch(0.81 0.118 78);
-  font-family:
-    "Trebuchet MS", "Segoe UI", ui-sans-serif, system-ui, -apple-system,
-    BlinkMacSystemFont, sans-serif;
+  --ink: oklch(0.145 0.032 112);
+  --green: oklch(0.265 0.078 128);
+  --rust: oklch(0.52 0.145 42);
+  --hi: oklch(0.82 0.145 78);
+  --hi-soft: oklch(0.9 0.052 82);
+  --paper: oklch(0.955 0.018 88);
+  --mud: oklch(0.37 0.035 78);
+  --display: "Archivo Black", Impact, sans-serif;
+  --body: "Atkinson Hyperlegible Next", "Trebuchet MS", system-ui, sans-serif;
+  font-family: var(--body);
   color: var(--ink);
-  background: oklch(0.955 0.012 92);
+  background: var(--paper);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -40,7 +43,7 @@ button {
 p {
   max-width: 70ch;
   margin: 0;
-  line-height: 1.55;
+  line-height: 1.48;
 }
 
 h1,
@@ -56,6 +59,6 @@ img {
 a:focus-visible,
 button:focus-visible,
 input:focus-visible {
-  outline: 3px solid var(--yellow);
+  outline: 3px solid var(--rust);
   outline-offset: 3px;
 }

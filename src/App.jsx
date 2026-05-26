@@ -1,4 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import L from 'leaflet'
+import 'leaflet-draw'
+import 'leaflet/dist/leaflet.css'
+import 'leaflet-draw/dist/leaflet.draw.css'
 import {
   Calculator,
   Check,
@@ -23,6 +27,7 @@ import tahomaImage from './assets/sod/tahoma-31.jpg'
 import palishadeImage from './assets/sod/palishade.jpg'
 import sprigImage from './assets/sod/sprig-box.jpg'
 import trafficImage from './assets/sod/traffic-tolerance.jpg'
+import { siteContent } from './data/siteContent'
 
 const products = [
   {
@@ -92,12 +97,250 @@ const proof = [
   'Woodson Park, Gaillardia, SNU, and KickingBird projects',
 ]
 
+const SQM_TO_SQFT = 10.7639104167
+
+function formatSqft(value) {
+  return `${Math.round(value).toLocaleString('en-US')} sq ft`
+}
+
+function LawnMeasureTool({ onMeasured }) {
+  const mapRef = useRef(null)
+  const drawnRef = useRef(null)
+  const mapNodeRef = useRef(null)
+  const [address, setAddress] = useState('')
+  const [status, setStatus] = useState('Search an address, then draw the lawn with polygon or rectangle tools.')
+  const [total, setTotal] = useState(0)
+  const [areas, setAreas] = useState([])
+
+  useEffect(() => {
+    if (!mapNodeRef.current || mapRef.current) return undefined
+
+    const map = L.map(mapNodeRef.current, {
+      center: [35.5433, -97.8077],
+      zoom: 16,
+      zoomControl: false,
+    })
+    mapRef.current = map
+
+    L.control.zoom({ position: 'bottomright' }).addTo(map)
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 20,
+      attribution: 'Tiles &copy; Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+    }).addTo(map)
+
+    const drawnItems = new L.FeatureGroup()
+    drawnRef.current = drawnItems
+    map.addLayer(drawnItems)
+
+    const drawControl = new L.Control.Draw({
+      position: 'topright',
+      draw: {
+        marker: false,
+        circle: false,
+        circlemarker: false,
+        polyline: false,
+        rectangle: {
+          shapeOptions: {
+            color: '#f0bd3a',
+            weight: 3,
+            fillColor: '#315f2d',
+            fillOpacity: 0.28,
+          },
+        },
+        polygon: {
+          allowIntersection: false,
+          showArea: true,
+          metric: false,
+          shapeOptions: {
+            color: '#f0bd3a',
+            weight: 3,
+            fillColor: '#315f2d',
+            fillOpacity: 0.28,
+          },
+        },
+      },
+      edit: {
+        featureGroup: drawnItems,
+        remove: true,
+      },
+    })
+    map.addControl(drawControl)
+
+    const layerAreaSqft = (layer) => {
+      const latLngs = layer.getLatLngs()
+      const ring = Array.isArray(latLngs[0]) ? latLngs[0] : latLngs
+      if (!ring || ring.length < 3 || !L.GeometryUtil) return 0
+      return Math.abs(L.GeometryUtil.geodesicArea(ring)) * SQM_TO_SQFT
+    }
+
+    const updateTotals = () => {
+      let nextTotal = 0
+      const nextAreas = []
+      let index = 1
+      drawnItems.eachLayer((layer) => {
+        const sqft = layerAreaSqft(layer)
+        nextTotal += sqft
+        nextAreas.push({ label: `Area ${index}`, sqft })
+        index += 1
+      })
+      setTotal(nextTotal)
+      setAreas(nextAreas)
+      if (nextTotal > 0) onMeasured(Math.round(nextTotal))
+    }
+
+    map.on(L.Draw.Event.CREATED, (event) => {
+      drawnItems.addLayer(event.layer)
+      updateTotals()
+      setStatus('Area added. Adjust points with the edit tool, or draw another section.')
+    })
+    map.on(L.Draw.Event.EDITED, updateTotals)
+    map.on(L.Draw.Event.DELETED, updateTotals)
+
+    setTimeout(() => map.invalidateSize(), 80)
+
+    return () => {
+      map.remove()
+      mapRef.current = null
+      drawnRef.current = null
+    }
+  }, [onMeasured])
+
+  const searchAddress = async (event) => {
+    event.preventDefault()
+    const query = address.trim()
+    if (!query) {
+      setStatus('Enter a full address first.')
+      return
+    }
+    setStatus('Searching address...')
+    try {
+      const params = new URLSearchParams({
+        q: query,
+        format: 'json',
+        limit: '1',
+        countrycodes: 'us',
+        addressdetails: '0',
+      })
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+        headers: { Accept: 'application/json' },
+      })
+      if (!response.ok) throw new Error('Address search failed.')
+      const data = await response.json()
+      const result = data[0]
+      if (!result) throw new Error('No address found. Try street, city, state, and ZIP.')
+      mapRef.current?.setView([Number(result.lat), Number(result.lon)], 19)
+      setStatus('Found it. Zoom or pan if needed, then draw the lawn edge.')
+    } catch (error) {
+      setStatus(error.message)
+    }
+  }
+
+  const useCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setStatus('Current-location lookup is not supported in this browser.')
+      return
+    }
+    setStatus('Finding your location...')
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        mapRef.current?.setView([position.coords.latitude, position.coords.longitude], 19)
+        setStatus('Location loaded. Draw the lawn edge.')
+      },
+      () => setStatus('Location access was denied. Search by address instead.'),
+      { timeout: 10000, enableHighAccuracy: true },
+    )
+  }
+
+  const copyTotal = async () => {
+    const text = `Measured lawn area: ${formatSqft(total)}`
+    try {
+      await navigator.clipboard.writeText(text)
+      setStatus(`Copied: ${text}`)
+    } catch {
+      setStatus('Copy failed. Highlight the total and copy it manually.')
+    }
+  }
+
+  const clearAreas = () => {
+    drawnRef.current?.clearLayers()
+    setTotal(0)
+    setAreas([])
+    setStatus('Cleared. Draw a new area when ready.')
+  }
+
+  return (
+    <section className="measure-section" id="measure">
+      <div className="measure-heading">
+        <p className="kicker">Yard measuring tool</p>
+        <h2>Draw the lawn on satellite imagery. Send the square footage straight into the sod estimate.</h2>
+      </div>
+      <form className="measure-search" onSubmit={searchAddress}>
+        <label htmlFor="measure-address">Address</label>
+        <div>
+          <input
+            id="measure-address"
+            type="search"
+            autoComplete="street-address"
+            placeholder="123 Main St, Yukon, OK"
+            value={address}
+            onChange={(event) => setAddress(event.target.value)}
+          />
+          <button type="submit">Search</button>
+        </div>
+        <button type="button" onClick={useCurrentLocation}>
+          Use my location
+        </button>
+        <p>{status}</p>
+      </form>
+      <div className="measure-tool">
+        <aside className="measure-panel">
+          <span>Measured total</span>
+          <strong>{formatSqft(total)}</strong>
+          <p>{areas.length} {areas.length === 1 ? 'area' : 'areas'}</p>
+          <div className="measure-actions">
+            <button type="button" disabled={total <= 0} onClick={copyTotal}>
+              Copy total
+            </button>
+            <button type="button" disabled={!areas.length} onClick={clearAreas}>
+              Clear
+            </button>
+          </div>
+          <ol>
+            {areas.length ? (
+              areas.map((area) => (
+                <li key={area.label}>
+                  <span>{area.label}</span>
+                  <b>{formatSqft(area.sqft)}</b>
+                </li>
+              ))
+            ) : (
+              <li>Draw around the lawn to start measuring.</li>
+            )}
+          </ol>
+          <small>Use polygon for curved lawn edges or rectangle for quick rough measurements.</small>
+        </aside>
+        <div ref={mapNodeRef} className="measure-map" role="application" aria-label="Satellite map for drawing lawn square footage" />
+      </div>
+    </section>
+  )
+}
+
 function App() {
   const [squareFeet, setSquareFeet] = useState(2400)
   const [activeNeed, setActiveNeed] = useState('traffic')
   const [selectedId, setSelectedId] = useState('tahoma')
 
   const selectedProduct = products.find((product) => product.id === selectedId) ?? products[0]
+  const preservedPages = siteContent.pages
+  const preservedStats = preservedPages.reduce(
+    (totals, page) => {
+      totals.prices += page.prices?.length || 0
+      totals.statistics += page.statistics?.length || 0
+      totals.images += page.imageCount || 0
+      return totals
+    },
+    { prices: 0, statistics: 0, images: 0 },
+  )
   const pallets = useMemo(() => Math.max(1, Math.ceil(squareFeet / 450)), [squareFeet])
   const rankedProducts = useMemo(
     () =>
@@ -125,6 +368,7 @@ function App() {
           </a>
           <nav aria-label="Page navigation">
             <a href="#selector">Sod</a>
+            <a href="#measure">Measure</a>
             <a href="#calculator">Estimate</a>
             <a href="#proof">Tahoma 31</a>
             <a href="#contact">Order</a>
@@ -136,15 +380,15 @@ function App() {
         <section className="ordering-board">
           <div className="intro-copy">
             <p className="kicker">Oklahoma sod farm</p>
-            <h1>Bermuda, fescue, and zoysia sod grown in Yukon.</h1>
+            <h1>Fresh sod. Yukon grown.</h1>
             <p>
-              Fresh cut to order for pickup, delivery, or installation timing. Compare varieties, estimate pallets, then
-              call the farm with a real number.
+              Bermuda, fescue, zoysia, and Tahoma 31 sprigs grown in Yukon. Compare varieties, estimate pallets, then
+              call the farm with a useful number.
             </p>
             <div className="action-row">
-              <a className="action primary" href="#calculator">
+              <a className="action primary" href="#measure">
                 <Calculator size={18} />
-                Estimate pallets
+                Measure yard
               </a>
               <a className="action secondary" href="https://www.sodbysherry.com/shop/">
                 <ShoppingCart size={18} />
@@ -184,7 +428,7 @@ function App() {
           <div className="workbench-header">
             <div>
               <p className="kicker">Sod varieties</p>
-              <h2>Choose by yard condition.</h2>
+              <h2>Match the grass to the yard, not the other way around.</h2>
             </div>
             <div className="need-tabs" aria-label="Filter products by yard need">
               {needs.map((need) => (
@@ -238,6 +482,8 @@ function App() {
           </div>
         </section>
 
+        <LawnMeasureTool onMeasured={setSquareFeet} />
+
         <section className="estimate-section" id="calculator">
           <div className="calculator-panel">
             <p className="kicker">Pallet calculator</p>
@@ -263,6 +509,71 @@ function App() {
             <a href="mailto:SodBySherry@gmail.com?subject=Sod%20estimate%20request">
               Send to the farm <ChevronRight size={17} />
             </a>
+          </div>
+        </section>
+
+        <section className="preserve-section">
+          <div>
+            <p className="kicker">Do not lose the current site</p>
+            <h2>Keep every useful page, make the paths cleaner.</h2>
+            <p>
+              The redesign should preserve the business information already on Sod By Sherry. The pitch is about better
+              routing, better hierarchy, and better tools, not deleting content.
+            </p>
+          </div>
+          <dl>
+            <div>
+              <dt>{preservedPages.length} URLs</dt>
+              <dd>All sitemap pages, product pages, product tags, category archives, and system routes are inventoried.</dd>
+            </div>
+            <div>
+              <dt>{preservedStats.statistics} statistics</dt>
+              <dd>Numbers, percentages, square-foot references, years, days, pounds, pallets, and similar facts are captured.</dd>
+            </div>
+            <div>
+              <dt>{preservedStats.prices} prices</dt>
+              <dd>Visible product and order pricing from the crawl is preserved for migration review.</dd>
+            </div>
+            <div>
+              <dt>{preservedStats.images} images</dt>
+              <dd>Gallery, product, history, sprigging, and care-page imagery is cataloged for reuse.</dd>
+            </div>
+          </dl>
+          <div className="content-vault">
+            {preservedPages.map((page) => (
+              <details key={page.url}>
+                <summary>
+                  <span>{page.type}</span>
+                  <strong>{page.title}</strong>
+                </summary>
+                <a href={page.url}>{page.url}</a>
+                {page.metaDescription && <p>{page.metaDescription}</p>}
+                {!!page.headings?.length && (
+                  <div>
+                    <b>Headings</b>
+                    <ul>{page.headings.map((item) => <li key={item}>{item}</li>)}</ul>
+                  </div>
+                )}
+                {!!page.prices?.length && (
+                  <div>
+                    <b>Prices</b>
+                    <ul>{page.prices.map((item) => <li key={item}>{item}</li>)}</ul>
+                  </div>
+                )}
+                {!!page.statistics?.length && (
+                  <div>
+                    <b>Stats and measurements</b>
+                    <ul>{page.statistics.map((item) => <li key={item}>{item}</li>)}</ul>
+                  </div>
+                )}
+                {!!page.keyText?.length && (
+                  <div>
+                    <b>Extracted content</b>
+                    <ul>{page.keyText.map((item) => <li key={item}>{item}</li>)}</ul>
+                  </div>
+                )}
+              </details>
+            ))}
           </div>
         </section>
 
