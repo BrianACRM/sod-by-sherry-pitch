@@ -428,7 +428,7 @@ function App() {
           <div className="workbench-header">
             <div>
               <p className="kicker">Sod varieties</p>
-              <h2>Match the grass to the yard, not the other way around.</h2>
+              <h2>Current sod varieties and price ranges.</h2>
             </div>
             <div className="need-tabs" aria-label="Filter products by yard need">
               {needs.map((need) => (
